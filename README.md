@@ -75,7 +75,7 @@ pip install tensorflow tensorflow-datasets numpy matplotlib Pillow
 
 ```bash
 git clone https://github.com/your-username/mnist-object-detection.git
-cd mnist-object-detection
+cd Object-Detection-Model
 ```
 
 ### 2. Install Dependencies
