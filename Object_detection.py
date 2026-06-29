@@ -15,7 +15,7 @@ def draw_bounding_boxes_on_image_array(image, boxes, color=None, thickness=2):
     return np.array(image_pil)
 
 def draw_bounding_boxes_on_image(image, boxes, color=None, thickness=2):
-    
+
     if boxes is None or len(boxes) == 0:
         return
 
@@ -23,7 +23,10 @@ def draw_bounding_boxes_on_image(image, boxes, color=None, thickness=2):
         raise ValueError("Boxes must be [N, 4]")
 
     for i in range(boxes.shape[0]):
-        ymin, xmin, ymax, xmax = boxes[i]
+        # FIX: boxes are stored as [xmin, ymin, xmax, ymax] in read_image_tfds,
+        # so unpack in that order (previously this was reversed to
+        # ymin, xmin, ymax, xmax, which swapped x/y when drawing boxes).
+        xmin, ymin, xmax, ymax = boxes[i]
 
         draw_bounding_box_on_image(
             image,
@@ -57,6 +60,9 @@ def draw_bounding_box_on_image(image, ymin, xmin, ymax, xmax,
     )
 
 def dataset_to_numpy_util(training_dataset, validation_dataset, N):
+    # FIX: previously this rebatched to size N into batch_train_ds but then
+    # iterated over the original training_dataset (batch size BATCH_SIZE)
+    # instead, so N was silently ignored. Now we actually use batch_train_ds.
     batch_train_ds = training_dataset.unbatch().batch(N)
 
     if tf.executing_eagerly():
@@ -65,7 +71,7 @@ def dataset_to_numpy_util(training_dataset, validation_dataset, N):
             validation_labels = validation_labels.numpy()
             validation_bboxes = validation_bboxes.numpy()
             break
-        for training_digits, (training_labels, training_bboxes) in training_dataset:
+        for training_digits, (training_labels, training_bboxes) in batch_train_ds:
             training_digits = training_digits.numpy()
             training_labels = training_labels.numpy()
             training_bboxes = training_bboxes.numpy()
@@ -85,7 +91,14 @@ def create_digits_from_local_fonts(n):
         font_labels.append(i%10)
         d.text((7+i*75, 0 if i<10 else -4), str(i%10), fill = (255,255), font = font1 if i <10 else font2)
     font_digits = np.array(img.getdata(), np.float32)[:,0] / 255.0
-    font_digits = np.reshape(np.stack(np.split(np.reshape(font_digits, [75, 75*n]),n, axis = 1), axis = 0) [n, 75*75])
+    # FIX: the original line had a missing comma, so "[n, 75*75]" was being
+    # interpreted as an index into the stacked array instead of a target
+    # shape for np.reshape, which raised an IndexError whenever this
+    # function was called. The shape tuple now actually reshapes the array.
+    font_digits = np.reshape(
+        np.stack(np.split(np.reshape(font_digits, [75, 75*n]), n, axis=1), axis=0),
+        [n, 75*75]
+    )
     return font_digits, font_labels
 
 def display_digits_with_boxes(digits, predictions, labels,
@@ -167,8 +180,8 @@ def read_image_tfds(image, label):
     xmin = tf.cast(xmin, tf.float32)
     ymin = tf.cast(ymin, tf.float32)
 
-    xmax = (xmin + 28) / 75   
-    ymax = (ymin + 28) / 75   
+    xmax = (xmin + 28) / 75
+    ymax = (ymin + 28) / 75
 
     xmin = xmin / 75
     ymin = ymin / 75
@@ -187,9 +200,9 @@ def get_training_dataset():
 
 def get_validation_dataset():
     with strategy.scope():
-        dataset = tfds.load('mnist', split = 'train', as_supervised=True, try_gcs = True)
-        dataset = dataset.map(read_image_tfds, num_parallel_calls = 16)
-        dataset = dataset.batch(10000, drop_remainder = True)
+        dataset = tfds.load('mnist', split='train', as_supervised=True, try_gcs=True)
+        dataset = dataset.map(read_image_tfds, num_parallel_calls=16)
+        dataset = dataset.batch(1000, drop_remainder=True)   # was 10000
         dataset = dataset.repeat()
     return dataset
 
@@ -254,7 +267,7 @@ def define_and_compile_model(inputs):
                         'bounding_box': 'mse'},
                   metrics={'classification': 'accuracy',
                            'bounding_box': 'mse'})
-    
+
     return model
 
 with strategy.scope():
@@ -269,14 +282,18 @@ steps_per_epoch = 60000 // BATCH_SIZE
 history = model.fit(training_dataset,
                     steps_per_epoch=steps_per_epoch,
                     validation_data=validation_dataset,
-                    validation_steps=1,
+                    validation_steps=10,        
                     epochs=EPOCHS)
 
-loss, classification_loss, bounding_box_loss, classification_acc, bounding_box_mse = model.evaluate(validation_dataset, steps=1)
+loss, classification_loss, bounding_box_loss, classification_acc, bounding_box_mse = model.evaluate(validation_dataset, steps=10)  # was steps=1
 
 print("\n-------------------------------\n")
 print("Validation Accuracy: ", classification_acc)
 print("\n-------------------------------\n")
+
+# NOTE: if these KeyError on history.history, run print(history.history.keys())
+# to confirm the exact metric names for your TF/Keras version (e.g. some
+# versions use 'classification_acc' instead of 'classification_accuracy').
 
 plot_metrics("bounding_box_mse", "Bounding Box MSE")
 plot_metrics("classification_accuracy", "Classification Accuracy")
@@ -319,10 +336,10 @@ iou = intersection_over_union(prediction_bboxes, validation_bboxes)
 
 iou_threshold = 0.6
 
-display_digits_with_boxes(validation_digits, 
-                          predicted_labels, 
-                          validation_labels, 
-                          prediction_bboxes, 
-                          validation_bboxes, 
-                          iou, 
+display_digits_with_boxes(validation_digits,
+                          predicted_labels,
+                          validation_labels,
+                          prediction_bboxes,
+                          validation_bboxes,
+                          iou,
                           "True and Pred values")
