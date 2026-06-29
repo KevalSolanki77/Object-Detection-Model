@@ -175,23 +175,6 @@ Two visualization stages are included:
 
 ---
 
-## 🐛 Known Issues / Notes
-
-- **`create_digits_from_local_fonts`**: There is a bug in the reshape line:
-  ```python
-  # Buggy line:
-  font_digits = np.reshape(np.stack(np.split(...), axis=0)[n, 75*75])
-  # Should likely be:
-  font_digits = np.reshape(np.stack(np.split(...), axis=0), [n, 75*75])
-  ```
-  This function is defined but not called in the main pipeline, so it does not affect training.
-
-- **`plot_metrics`** uses a global `history` variable — ensure training completes before calling it.
-
-- **`try_gcs=True`** in `tfds.load` attempts to load from Google Cloud Storage (useful in Colab/GCP). On a local machine, it gracefully falls back to a local download.
-
----
-
 ## ☁️ Running on Google Colab
 
 This script is fully compatible with Google Colab. Simply upload `Object_detection.py` and run:
